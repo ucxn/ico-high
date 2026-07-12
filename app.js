@@ -389,9 +389,15 @@ function canvasToBmp(canvas, hasAlpha) {
     
     const bitsPerPixel = hasAlpha ? 32 : 24;
     const rowSize = Math.floor((bitsPerPixel * width + 31) / 32) * 4;
-    const imageSize = rowSize * height;
+    const xorImageSize = rowSize * height;
+    
+    // AND mask (1 bit per pixel, each row padded to 4 bytes)
+    const andRowSize = Math.floor((width + 31) / 32) * 4;
+    const andImageSize = andRowSize * height;
+    
     const headerSize = 40;
-    const fileSize = headerSize + imageSize;
+    const totalImageSize = xorImageSize + andImageSize;
+    const fileSize = headerSize + totalImageSize;
     
     const buffer = new ArrayBuffer(fileSize);
     const view = new DataView(buffer);
@@ -403,8 +409,8 @@ function canvasToBmp(canvas, hasAlpha) {
     view.setInt32(offset, height * 2, true); offset += 4;  // Height (double for XOR and AND masks)
     view.setUint16(offset, 1, true); offset += 2;          // Planes
     view.setUint16(offset, bitsPerPixel, true); offset += 2; // Bit depth
-    view.setUint32(offset, hasAlpha ? 0 : 0, true); offset += 4; // Compression
-    view.setUint32(offset, imageSize, true); offset += 4;  // Image size
+    view.setUint32(offset, 0, true); offset += 4;          // Compression
+    view.setUint32(offset, totalImageSize, true); offset += 4;  // Image size
     view.setInt32(offset, 2835, true); offset += 4;        // X resolution
     view.setInt32(offset, 2835, true); offset += 4;        // Y resolution
     view.setUint32(offset, 0, true); offset += 4;          // Colors
@@ -432,6 +438,43 @@ function canvasToBmp(canvas, hasAlpha) {
         const padding = rowSize - (width * (bitsPerPixel / 8));
         for (let p = 0; p < padding; p++) {
             view.setUint8(offset++, 0);
+        }
+    }
+    
+    // Write AND mask (bottom to top)
+    for (let y = height - 1; y >= 0; y--) {
+        let bitBuffer = 0;
+        let bitCount = 0;
+        let bytesWritten = 0;
+        
+        for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            const a = data[i + 3];
+            
+            // If has transparency and alpha is low, set transparency bit to 1, otherwise 0
+            const bit = (hasAlpha && a < 128) ? 1 : 0;
+            
+            bitBuffer = (bitBuffer << 1) | bit;
+            bitCount++;
+            
+            if (bitCount === 8) {
+                view.setUint8(offset++, bitBuffer);
+                bitBuffer = 0;
+                bitCount = 0;
+                bytesWritten++;
+            }
+        }
+        
+        if (bitCount > 0) {
+            bitBuffer = bitBuffer << (8 - bitCount);
+            view.setUint8(offset++, bitBuffer);
+            bytesWritten++;
+        }
+        
+        // Pad row to 4-byte boundary
+        while (bytesWritten < andRowSize) {
+            view.setUint8(offset++, 0);
+            bytesWritten++;
         }
     }
     
