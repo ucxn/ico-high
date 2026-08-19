@@ -108,10 +108,6 @@ pyinstaller --clean icon_generator.spec
 - **WebView2 运行时**：Windows 10/11 已预装，Windows 7/8 需要手动安装
 - **Python**：3.8+（仅运行源码时需要）
 
-## 许可证
-
-MIT License
-
 ## 致谢
 
 - [pywebview](https://github.com/r0x0r/pywebview) - 用于创建桌面应用
