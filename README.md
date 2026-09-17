@@ -27,7 +27,7 @@
 
 1. 克隆仓库
 ```bash
-git clone https://github.com/yourusername/ico-generator.git
+git clone https://github.com/ucxn/ico-high
 cd ico-generator
 ```
 
@@ -43,7 +43,7 @@ python main.py
 
 ### 方法二：使用打包好的 EXE
 
-直接下载 `ICO生成器.exe` 文件，双击运行即可。
+直接下载 [ICO生成器.exe](https://github.com/MufeeSama/ico-generator/releases) 文件，双击运行即可。
 
 > **注意**：Windows 10/11 系统需要安装 WebView2 运行时（大多数现代系统已预装）
 
@@ -84,8 +84,7 @@ ico-generator/
 │   ├── index.html         # 主页面
 │   ├── style.css          # 样式文件
 │   └── app.js             # 前端逻辑
-└── dist/                  # 打包输出目录
-    └── ICO生成器.exe      # 可执行文件
+
 ```
 
 ## 打包成 EXE
