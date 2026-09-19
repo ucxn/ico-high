@@ -28,7 +28,7 @@
 1. 克隆仓库
 ```bash
 git clone https://github.com/ucxn/ico-high
-cd ico-generator
+cd ico-high
 ```
 
 2. 安装依赖
@@ -43,7 +43,7 @@ python main.py
 
 ### 方法二：使用打包好的 EXE
 
-直接下载 [ICO生成器.exe](https://github.com/MufeeSama/ico-generator/releases) 文件，双击运行即可。
+直接下载 [ICO.exe](https://github.com/MufeeSama/ico-generator/releases/latest/download/ICO.exe) 文件，双击运行即可。
 
 > **注意**：Windows 10/11 系统需要安装 WebView2 运行时（大多数现代系统已预装）
 
@@ -115,3 +115,18 @@ pyinstaller --clean icon_generator.spec
 ## 说明
 
 个人尝试过很多开源和闭源的 ICO 生成器，不管是教条主义的遵守 256×256 标准，还是更加野路子的，要么非要先入为主地强制裁剪，要么生成出来兼容性很差；要么单个可以，但是组合很差。要么组合可以，但是单个很差；况且我还要在OpenUserJS 这种对大小要求变态的地方，要同时支持多个大小。总而言之，不管代码牛不牛逼，反正用起来确实是我目前用过的最好用的，故特此收藏。
+
+## 更新日志
+
+### v2.0
+- ✨ 新增三种缩放模式（填充/适应/拉伸），对非正方形图片更友好
+- 🌙 新增深色模式，支持一键切换，自动记住偏好
+- 📊 生成 ICO 时显示进度条，大批次处理不再空白等待
+- 🎯 界面优化：主题切换按钮移至标题栏
+
+### v1.0.0
+- 初始版本发布
+- 支持批量生成 ICO 文件
+- 支持多种预设尺寸
+- 支持自定义尺寸
+- 支持 ZIP 打包

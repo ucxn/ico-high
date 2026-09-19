@@ -17,6 +17,7 @@ const icons = {
 // Global state
 let uploadedImages = [];
 let generatedFiles = [];
+let currentTheme = localStorage.getItem('ico-generator-theme') || 'light';
 
 // DOM elements
 const dropZone = document.getElementById('dropZone');
@@ -39,15 +40,46 @@ const resultModal = document.getElementById('resultModal');
 const resultContent = document.getElementById('resultContent');
 const customSizes = document.getElementById('customSizes');
 const colorMode = document.getElementById('colorMode');
+const resizeMode = document.getElementById('resizeMode');
+
+// Theme toggle
+const btnThemeToggle = document.getElementById('btnThemeToggle');
+
+// Progress bar
+const progressContainer = document.getElementById('progressContainer');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const progressPercent = document.getElementById('progressPercent');
+
+// Titlebar elements
+const btnMinimize = document.getElementById('btnMinimize');
+const btnClose = document.getElementById('btnClose');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    applyTheme(currentTheme);
     bindEvents();
     updateUI();
 });
 
 // Bind events
 function bindEvents() {
+    // Titlebar window controls
+    if (btnMinimize) {
+        btnMinimize.addEventListener('click', () => {
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.minimize_window();
+            }
+        });
+    }
+    if (btnClose) {
+        btnClose.addEventListener('click', () => {
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.close_window();
+            }
+        });
+    }
+
     // Add image button
     btnAddImage.addEventListener('click', () => {
         const input = document.createElement('input');
@@ -110,6 +142,9 @@ function bindEvents() {
 
     // Generate ICO
     btnGenerateIco.addEventListener('click', generateIco);
+
+    // Theme toggle
+    btnThemeToggle.addEventListener('click', toggleTheme);
 
     // Package ZIP
     btnPackageZip.addEventListener('click', packageZip);
@@ -271,51 +306,66 @@ function getSelectedSizes() {
 }
 
 // Resize image to specified size
-function resizeImage(img, size) {
+function resizeImage(img, size, mode) {
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d');
-    
+
     // High quality scaling
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    
-    // Draw image (keep ratio, center crop)
-    const scale = Math.max(size / img.width, size / img.height);
-    const x = (size - img.width * scale) / 2;
-    const y = (size - img.height * scale) / 2;
-    
-    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-    
+
+    if (mode === 'stretch') {
+        // Stretch: ignore aspect ratio, fill exactly
+        ctx.drawImage(img, 0, 0, size, size);
+    } else if (mode === 'fit') {
+        // Fit: keep aspect ratio, center with transparent padding
+        const scale = Math.min(size / img.width, size / img.height);
+        const x = (size - img.width * scale) / 2;
+        const y = (size - img.height * scale) / 2;
+        ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+    } else {
+        // Cover: center-crop to fill (default)
+        const scale = Math.max(size / img.width, size / img.height);
+        const x = (size - img.width * scale) / 2;
+        const y = (size - img.height * scale) / 2;
+        ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+    }
+
     return canvas;
 }
 
 // Create ICO file (BMP format)
-async function createIcoFile(images, sizes, colorModeValue) {
+async function createIcoFile(images, sizes, colorModeValue, resizeModeValue, onProgress) {
     const icoImages = [];
-    
-    for (const imgData of images) {
+
+    for (let i = 0; i < images.length; i++) {
+        const imgData = images[i];
         const img = await loadImage(imgData.preview);
         const iconImages = [];
-        
+
         for (const size of sizes) {
-            const canvas = resizeImage(img, size);
+            const canvas = resizeImage(img, size, resizeModeValue);
             const bmpData = canvasToBmp(canvas, colorModeValue === 'rgba');
             iconImages.push({
                 size: size,
                 data: bmpData
             });
         }
-        
+
         // Build ICO file
         const icoBuffer = buildIcoFile(iconImages);
         icoImages.push({
             name: imgData.name.replace(/\.[^/.]+$/, '') + '.ico',
             data: icoBuffer
         });
+
+        if (onProgress) {
+            onProgress(i + 1, images.length);
+        }
     }
-    
+
     return icoImages;
 }
 
@@ -339,9 +389,15 @@ function canvasToBmp(canvas, hasAlpha) {
     
     const bitsPerPixel = hasAlpha ? 32 : 24;
     const rowSize = Math.floor((bitsPerPixel * width + 31) / 32) * 4;
-    const imageSize = rowSize * height;
+    const xorImageSize = rowSize * height;
+    
+    // AND mask (1 bit per pixel, each row padded to 4 bytes)
+    const andRowSize = Math.floor((width + 31) / 32) * 4;
+    const andImageSize = andRowSize * height;
+    
     const headerSize = 40;
-    const fileSize = headerSize + imageSize;
+    const totalImageSize = xorImageSize + andImageSize;
+    const fileSize = headerSize + totalImageSize;
     
     const buffer = new ArrayBuffer(fileSize);
     const view = new DataView(buffer);
@@ -353,8 +409,8 @@ function canvasToBmp(canvas, hasAlpha) {
     view.setInt32(offset, height * 2, true); offset += 4;  // Height (double for XOR and AND masks)
     view.setUint16(offset, 1, true); offset += 2;          // Planes
     view.setUint16(offset, bitsPerPixel, true); offset += 2; // Bit depth
-    view.setUint32(offset, hasAlpha ? 0 : 0, true); offset += 4; // Compression
-    view.setUint32(offset, imageSize, true); offset += 4;  // Image size
+    view.setUint32(offset, 0, true); offset += 4;          // Compression
+    view.setUint32(offset, totalImageSize, true); offset += 4;  // Image size
     view.setInt32(offset, 2835, true); offset += 4;        // X resolution
     view.setInt32(offset, 2835, true); offset += 4;        // Y resolution
     view.setUint32(offset, 0, true); offset += 4;          // Colors
@@ -364,11 +420,13 @@ function canvasToBmp(canvas, hasAlpha) {
     for (let y = height - 1; y >= 0; y--) {
         for (let x = 0; x < width; x++) {
             const i = (y * width + x) * 4;
-            const b = data[i];
+            // Canvas ImageData is RGBA, BMP needs BGRA
+            const r = data[i];
             const g = data[i + 1];
-            const r = data[i + 2];
+            const b = data[i + 2];
             const a = data[i + 3];
             
+            // Write in BGRA order for BMP
             view.setUint8(offset++, b);
             view.setUint8(offset++, g);
             view.setUint8(offset++, r);
@@ -380,6 +438,43 @@ function canvasToBmp(canvas, hasAlpha) {
         const padding = rowSize - (width * (bitsPerPixel / 8));
         for (let p = 0; p < padding; p++) {
             view.setUint8(offset++, 0);
+        }
+    }
+    
+    // Write AND mask (bottom to top)
+    for (let y = height - 1; y >= 0; y--) {
+        let bitBuffer = 0;
+        let bitCount = 0;
+        let bytesWritten = 0;
+        
+        for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            const a = data[i + 3];
+            
+            // If has transparency and alpha is low, set transparency bit to 1, otherwise 0
+            const bit = (hasAlpha && a < 128) ? 1 : 0;
+            
+            bitBuffer = (bitBuffer << 1) | bit;
+            bitCount++;
+            
+            if (bitCount === 8) {
+                view.setUint8(offset++, bitBuffer);
+                bitBuffer = 0;
+                bitCount = 0;
+                bytesWritten++;
+            }
+        }
+        
+        if (bitCount > 0) {
+            bitBuffer = bitBuffer << (8 - bitCount);
+            view.setUint8(offset++, bitBuffer);
+            bytesWritten++;
+        }
+        
+        // Pad row to 4-byte boundary
+        while (bytesWritten < andRowSize) {
+            view.setUint8(offset++, 0);
+            bytesWritten++;
         }
     }
     
@@ -442,19 +537,32 @@ async function generateIco() {
     btnGenerateIco.disabled = true;
     btnGenerateIco.innerHTML = `<span class="btn-icon">${icons.loader}</span><span>生成中...</span>`;
 
+    showProgress(true, 0);
+
     try {
-        const icoFiles = await createIcoFile(uploadedImages, sizes, colorMode.value);
-        
+        const icoFiles = await createIcoFile(
+            uploadedImages,
+            sizes,
+            colorMode.value,
+            resizeMode.value,
+            (current, total) => {
+                const pct = Math.round((current / total) * 100);
+                showProgress(true, pct, `正在处理 ${current}/${total} 张图片`);
+            }
+        );
+
         generatedFiles = icoFiles.map((file, i) => ({
             name: file.name,
             data: file.data,
             sizes: sizes
         }));
-        
+
+        showProgress(false);
         showResultModal(generatedFiles);
         updateUI();
         showNotification('ICO 文件生成成功', 'success');
     } catch (error) {
+        showProgress(false);
         showNotification('生成失败：' + error.message, 'error');
     } finally {
         btnGenerateIco.disabled = false;
@@ -484,19 +592,58 @@ function showResultModal(files) {
 
 // Save ICO files
 async function saveIcoFiles() {
-    for (const file of generatedFiles) {
-        const blob = new Blob([file.data], { type: 'image/x-icon' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = file.name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+    if (generatedFiles.length === 0) {
+        showNotification('没有可保存的文件', 'error');
+        return;
     }
-    showNotification('ICO 文件已下载', 'success');
-    resultModal.classList.remove('show');
+
+    // Check if running in pywebview environment
+    const isPywebview = window.pywebview && window.pywebview.api;
+
+    if (isPywebview) {
+        // Use Python API in pywebview environment
+        try {
+            const filesForSave = generatedFiles.map(f => ({
+                name: f.name,
+                base64: arrayBufferToBase64(f.data)
+            }));
+
+            const result = await window.pywebview.api.save_ico_from_base64(filesForSave);
+            if (result.success) {
+                showNotification('ICO 文件已保存', 'success');
+                resultModal.classList.remove('show');
+            } else {
+                showNotification(result.message || '保存失败', 'error');
+            }
+        } catch (error) {
+            showNotification('保存失败：' + error.message, 'error');
+        }
+    } else {
+        // Use browser download in web environment
+        for (const file of generatedFiles) {
+            const blob = new Blob([file.data], { type: 'image/x-icon' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        showNotification('ICO 文件已下载', 'success');
+        resultModal.classList.remove('show');
+    }
+}
+
+// ArrayBuffer to base64
+function arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
 }
 
 // Package ZIP
@@ -671,6 +818,42 @@ async function downloadZip() {
         resultModal.classList.remove('show');
     } catch (error) {
         showNotification('下载失败：' + error.message, 'error');
+    }
+}
+
+// ============================================
+// Theme Toggle (Dark Mode)
+// ============================================
+
+function toggleTheme() {
+    currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    applyTheme(currentTheme);
+    localStorage.setItem('ico-generator-theme', currentTheme);
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+}
+
+// ============================================
+// Progress Bar
+// ============================================
+
+function showProgress(active, percent, text) {
+    if (active) {
+        progressContainer.classList.add('active');
+        progressFill.style.width = percent + '%';
+        progressPercent.textContent = percent + '%';
+        if (text) {
+            progressText.textContent = text;
+        }
+        progressContainer.setAttribute('aria-valuenow', percent);
+    } else {
+        progressContainer.classList.remove('active');
+        progressFill.style.width = '0%';
+        progressPercent.textContent = '0%';
+        progressText.textContent = '准备中...';
+        progressContainer.setAttribute('aria-valuenow', 0);
     }
 }
 
