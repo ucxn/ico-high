@@ -119,7 +119,7 @@ class Api:
 
     def _create_bmp_ico(self, icon_images, output_path):
         """手动构建BMP格式的ICO文件，确保Windows兼容性"""
-        # ICO文件头
+        # ico文件头
         ico_header = struct.pack('<HHH', 0, 1, len(icon_images))  # 保留, 类型(1=ICO), 图像数量
 
         # 计算目录项和数据偏移
@@ -196,10 +196,18 @@ class Api:
             xor_mask.extend(bgra[row_start:row_start + row_size])
             xor_mask.extend([0] * padding)
 
-        # AND掩码（1位单色，用于透明）- 对于32位图像，可以省略或全0
-        and_mask = bytes((height * ((width + 31) // 32) * 4))
+        # AND 掩码：给不完全依赖 32 位 alpha 的 ICO 读取器保留透明信息
+        and_row_size = ((width + 31) // 32) * 4
+        and_mask = bytearray()
+        for y in range(height - 1, -1, -1):
+            row = bytearray(and_row_size)
+            for x in range(width):
+                alpha = pixels[(y * width + x) * 4 + 3]
+                if alpha < 128:
+                    row[x // 8] |= 0x80 >> (x % 8)
+            and_mask.extend(row)
 
-        return header + bytes(xor_mask) + and_mask
+        return header + bytes(xor_mask) + bytes(and_mask)
 
     def _create_24bit_bmp(self, img):
         """创建24位BMP图像数据（BGR格式）"""
@@ -277,7 +285,7 @@ class Api:
             return {'success': False, 'message': '请先添加图片'}
 
         try:
-            size_list = [int(s) for s in sizes if s]
+            size_list = [int(s) for s in sizes if s and int(s) > 0]
             if not size_list:
                 return {'success': False, 'message': '请选择至少一个尺寸'}
 
@@ -384,52 +392,50 @@ class Api:
 
     def _create_icns(self, icon_images, output_path):
         """构建 ICNS 格式图标文件"""
-        # ICNS 格式: header(8B) + icon entry(8B + PNG数据) * N
-        # header: magic 'icns' + total file size (big-endian uint32)
-
-        # 尺寸到 ICNS 类型码映射
-        size_to_type = {
-            16: b'icp4',
-            32: b'icp5',
-            64: b'icp6',
-            128: b'ic07',
-            256: b'ic08',
-            512: b'ic09',
-            1024: b'ic10',
+        # 同一像素尺寸可以同时填充普通槽位和 Retina @2x 槽位。
+        # 24/48 使用 macOS 后期加入的 PNG 槽；64 使用 ic12，而不是误写成 icp6。
+        size_to_types = {
+            16: (b'icp4',),
+            24: (b'sb24',),
+            32: (b'icp5', b'ic11'),
+            36: (b'icsB',),
+            48: (b'SB24', b'icp6'),
+            64: (b'ic12',),
+            128: (b'ic07',),
+            256: (b'ic08', b'ic13'),
+            512: (b'ic09', b'ic14'),
+            1024: (b'ic10',),
         }
 
-        entries = bytearray()
-        data_entries = []
+        elements = bytearray()
 
         for img in icon_images:
-            size = img.width  # 假设是正方形
-            icon_type = size_to_type.get(size, b'ic08')
+            icon_types = size_to_types.get(img.width, ())
+            if not icon_types:
+                continue
 
-            # 将图像保存为 PNG
             buf = BytesIO()
-            # 确保是 RGBA 模式
             if img.mode != 'RGBA':
                 png_img = img.convert('RGBA')
+                try:
+                    png_img.save(buf, format='PNG')
+                finally:
+                    png_img.close()
             else:
-                png_img = img
-            png_img.save(buf, format='PNG')
+                img.save(buf, format='PNG')
             png_data = buf.getvalue()
 
-            entry_header = icon_type + struct.pack('>I', 8 + len(png_data))
-            entries.extend(entry_header)
-            data_entries.append(png_data)
+            # ICNS element 必须连续保存 type + length + payload。
+            for icon_type in icon_types:
+                elements.extend(icon_type)
+                elements.extend(struct.pack('>I', 8 + len(png_data)))
+                elements.extend(png_data)
 
-        # 构建完整 ICNS 文件
-        total_size = 8 + len(entries) + sum(len(d) for d in data_entries)
-        icns_data = bytearray()
-        icns_data.extend(b'icns')
-        icns_data.extend(struct.pack('>I', total_size))
-        icns_data.extend(entries)
-        for data in data_entries:
-            icns_data.extend(data)
-
+        total_size = 8 + len(elements)
         with open(output_path, 'wb') as f:
-            f.write(icns_data)
+            f.write(b'icns')
+            f.write(struct.pack('>I', total_size))
+            f.write(elements)
 
     def generate_icns(self, sizes, color_mode='rgba', resize_mode='cover'):
         """生成 ICNS 文件"""
@@ -437,9 +443,10 @@ class Api:
             return {'success': False, 'message': '请先添加图片'}
 
         try:
-            size_list = [int(s) for s in sizes if s and int(s) in (16, 32, 64, 128, 256, 512, 1024)]
+            icns_sizes = (16, 24, 32, 36, 48, 64, 128, 256, 512, 1024)
+            size_list = [int(s) for s in sizes if s and int(s) in icns_sizes]
             if not size_list:
-                return {'success': False, 'message': 'ICNS 格式仅支持 16, 32, 64, 128, 256, 512, 1024 尺寸'}
+                return {'success': False, 'message': '没有可写入 ICNS 的尺寸：可用 16, 24, 32, 36, 48, 64, 128, 256, 512, 1024'}
 
             results = []
             for img_info in self.uploaded_images:
